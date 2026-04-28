@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import './index.css'
 import DigitalTwin from '../digital_twin.jsx'
@@ -138,7 +138,7 @@ function BeadMillModeSelection({ onBack, onSelectMode }) {
   )
 }
 
-function ScaleSelection({ onSelectScale }) {
+function ScaleSelection({ onSelectScale, onShowFlowchart }) {
   return (
     <SelectionShell>
       <h1 style={styles.title}>Selecciona la escala de operación</h1>
@@ -154,6 +154,100 @@ function ScaleSelection({ onSelectScale }) {
           <span style={styles.optionLabel}>Escala Industrial</span>
           <span style={styles.optionText}>Procesos escalados y operación industrial.</span>
         </button>
+      </div>
+      <div style={{ marginTop: 28, display: 'flex', justifyContent: 'center' }}>
+        <button style={styles.flowchartButton} onClick={onShowFlowchart}>
+          Ver diagrama de flujo
+        </button>
+      </div>
+    </SelectionShell>
+  )
+}
+
+const FLOWCHART_SOURCE = `flowchart TD
+    Start([Usuario abre la app]):::start --> Main[main.jsx<br/>App component]
+    Main --> Scale{ScaleSelection<br/>¿Qué escala?}
+    Scale -->|Laboratorio| LabProc{ProcessSelection<br/>laboratorio}
+    Scale -->|Industrial| IndProc{ProcessSelection<br/>industrial}
+
+    LabProc -->|Bead Mill| LabBM[DigitalTwin<br/>digital_twin.jsx]:::twin
+    LabProc -->|Centrifugación| LabC[CentrifugationTwin.jsx]:::twin
+
+    IndProc -->|Bead Mill| IBMmode{BeadMillModeSelection<br/>3 modos}
+    IndProc -->|Centrifugación| ICmode{CentrifugeModeSelection<br/>2 modos}
+
+    IBMmode -->|processGoal| IBM[IndustrialBeadMillTwin.jsx]:::twin
+    IBMmode -->|knownFlow| IBM
+    IBMmode -->|residenceTarget| IBM
+
+    ICmode -->|processGoal| IC[IndustrialTubularCentrifugeTwin.jsx]:::twin
+    ICmode -->|directFlow| IC
+
+    LabBM --> Out[Resultados:<br/>parámetros · gráficas · tablas]:::out
+    LabC --> Out
+    IBM --> Out
+    IC --> Out
+
+    classDef start fill:#7c3aed,stroke:#5b21b6,color:#fff,font-weight:bold
+    classDef twin fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#1e1b2e
+    classDef out fill:#fce7f3,stroke:#ec4899,stroke-width:2px,color:#1e1b2e`
+
+function FlowchartView({ onBack }) {
+  const containerRef = useRef(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const render = async () => {
+      if (!window.mermaid || !containerRef.current) return
+      try {
+        window.mermaid.initialize({
+          startOnLoad: false,
+          theme: 'default',
+          themeVariables: {
+            primaryColor: '#ede9fe',
+            primaryTextColor: '#1e1b2e',
+            primaryBorderColor: '#7c3aed',
+            lineColor: '#7c3aed',
+            fontFamily: 'Inter, system-ui, sans-serif',
+          },
+          flowchart: { curve: 'basis', padding: 20, nodeSpacing: 50, rankSpacing: 70 },
+        })
+        const { svg } = await window.mermaid.render('flowchart-svg-' + Date.now(), FLOWCHART_SOURCE)
+        if (!cancelled && containerRef.current) {
+          containerRef.current.innerHTML = svg
+        }
+      } catch (err) {
+        if (containerRef.current) {
+          containerRef.current.innerHTML = '<p style="color:#dc2626">Error al renderizar el diagrama: ' + err.message + '</p>'
+        }
+      }
+    }
+
+    if (window.mermaid) {
+      render()
+    } else {
+      const interval = setInterval(() => {
+        if (window.mermaid) {
+          clearInterval(interval)
+          render()
+        }
+      }, 100)
+      return () => { cancelled = true; clearInterval(interval) }
+    }
+    return () => { cancelled = true }
+  }, [])
+
+  return (
+    <SelectionShell>
+      <button style={styles.backButton} onClick={onBack}>Volver</button>
+      <h1 style={styles.title}>Diagrama de flujo del código</h1>
+      <p style={styles.subtitle}>
+        Navegación entre componentes de la aplicación, desde la pantalla inicial hasta cada simulador.
+      </p>
+      <div style={styles.flowchartCanvas} ref={containerRef}>
+        <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: 'rgba(30,27,46,0.6)' }}>
+          Cargando diagrama…
+        </p>
       </div>
     </SelectionShell>
   )
@@ -203,14 +297,22 @@ function App() {
   const [processId, setProcessId] = useState(null)
   const [beadMillMode, setBeadMillMode] = useState(null)
   const [centrifugeMode, setCentrifugeMode] = useState(null)
+  const [showFlowchart, setShowFlowchart] = useState(false)
+
+  if (showFlowchart) {
+    return <FlowchartView onBack={() => setShowFlowchart(false)} />
+  }
 
   if (!scale) {
-    return <ScaleSelection onSelectScale={(nextScale) => {
-      setScale(nextScale)
-      setProcessId(null)
-      setBeadMillMode(null)
-      setCentrifugeMode(null)
-    }} />
+    return <ScaleSelection
+      onSelectScale={(nextScale) => {
+        setScale(nextScale)
+        setProcessId(null)
+        setBeadMillMode(null)
+        setCentrifugeMode(null)
+      }}
+      onShowFlowchart={() => setShowFlowchart(true)}
+    />
   }
 
   if (!processId) {
@@ -386,6 +488,34 @@ const styles = {
     color: '#6d28d9',
     fontSize: 12,
     fontWeight: 800,
+  },
+  flowchartButton: {
+    padding: '12px 24px',
+    border: '1px solid rgba(124,58,237,0.35)',
+    borderRadius: 10,
+    background: 'rgba(124,58,237,0.10)',
+    backdropFilter: 'blur(12px)',
+    color: '#7c3aed',
+    fontFamily: '"JetBrains Mono", "Courier New", monospace',
+    fontSize: 12,
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
+  flowchartCanvas: {
+    marginTop: 8,
+    padding: 24,
+    border: '1px solid rgba(255,255,255,0.70)',
+    borderRadius: 14,
+    background: 'rgba(255,255,255,0.55)',
+    backdropFilter: 'blur(16px)',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.05)',
+    minHeight: 480,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'auto',
   },
   floatingBackButton: {
     position: 'fixed',
